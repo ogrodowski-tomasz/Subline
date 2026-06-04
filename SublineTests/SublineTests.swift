@@ -1,10 +1,3 @@
-//
-//  SublineTests.swift
-//  SublineTests
-//
-//  Created by itcraft on 04/06/2026.
-//
-
 import XCTest
 @testable import Subline
 

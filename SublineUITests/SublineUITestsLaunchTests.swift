@@ -1,10 +1,3 @@
-//
-//  SublineUITestsLaunchTests.swift
-//  SublineUITests
-//
-//  Created by itcraft on 04/06/2026.
-//
-
 import XCTest
 
 final class SublineUITestsLaunchTests: XCTestCase {
