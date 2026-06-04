@@ -11,8 +11,7 @@ struct ContentView: View {
         NavigationSplitView {
             SublineSidebarView(
                 workspace: workspace,
-                importAction: openSubtitleFile,
-                videoImportAction: openVideoFile
+                importAction: openSubtitleFile
             )
         } detail: {
             SublineDetailView(workspace: workspace)
@@ -59,24 +58,6 @@ struct ContentView: View {
         }
 
         workspace.handleImport(.success(url))
-    }
-
-    private func openVideoFile() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.movie]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.canCreateDirectories = false
-        panel.message = "Wybierz plik wideo, z którego odczytamy fps"
-
-        guard panel.runModal() == .OK, let url = panel.url else {
-            return
-        }
-
-        Task { @MainActor in
-            await workspace.handleVideoImport(.success(url))
-        }
     }
 }
 

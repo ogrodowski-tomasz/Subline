@@ -1,4 +1,3 @@
-import AVFoundation
 import Combine
 import Foundation
 import SwiftUI
@@ -84,36 +83,21 @@ final class SublineWorkspace: ObservableObject {
         }
     }
 
-    enum FrameRateSource: String, CaseIterable, Identifiable {
-        case manual
-        case videoFile
-
-        var id: String { rawValue }
-
-        var title: String {
-            switch self {
-            case .manual:
-                return "Ręcznie"
-            case .videoFile:
-                return "Z pliku wideo"
+    @Published var sourceFileURL: URL?
+    @Published var selectedEncoding: TextEncodingOption = .windowsCP1250 {
+        didSet {
+            guard sourceFileURL != nil else {
+                return
             }
+
+            reloadSource()
         }
     }
-
-    @Published var sourceFileURL: URL?
-    @Published var selectedEncoding: TextEncodingOption = .windowsCP1250
-    @Published var frameRateSource: FrameRateSource = .manual {
-        didSet { generatePreview() }
-    }
     @Published var manualFrameRateInput: String = "" {
-        didSet { generatePreview() }
-    }
-    @Published var videoFileURL: URL?
-    @Published var detectedVideoFrameRate: Double? {
-        didSet { generatePreview() }
+        didSet { schedulePreviewRefresh() }
     }
     @Published var sourceText: String = "" {
-        didSet { generatePreview() }
+        didSet { schedulePreviewRefresh() }
     }
 
     @Published var outputText: String = ""
@@ -121,6 +105,8 @@ final class SublineWorkspace: ObservableObject {
     @Published var statusLevel: StatusLevel = .info
     @Published var sourceLineCount: Int = 0
     @Published var generatedCueCount: Int = 0
+
+    private var previewRefreshTask: Task<Void, Never>?
 
     var canGenerate: Bool {
         !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && effectiveFrameRate != nil
@@ -132,10 +118,6 @@ final class SublineWorkspace: ObservableObject {
 
     var sourceFileName: String {
         sourceFileURL?.lastPathComponent ?? "Nie wybrano pliku"
-    }
-
-    var videoFileName: String {
-        videoFileURL?.lastPathComponent ?? "Nie wybrano pliku wideo"
     }
 
     var defaultExportFilename: String {
@@ -152,39 +134,22 @@ final class SublineWorkspace: ObservableObject {
     }
 
     var manualFrameRateValue: Double? {
-        let normalized = manualFrameRateInput.replacingOccurrences(of: ",", with: ".")
+        let normalized = manualFrameRateInput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
         return Double(normalized)
     }
 
     var effectiveFrameRate: Double? {
-        switch frameRateSource {
-        case .manual:
-            return manualFrameRateValue
-        case .videoFile:
-            return detectedVideoFrameRate ?? detectFrameRateInSourceText()
-        }
+        manualFrameRateValue
     }
 
     var effectiveFrameRateDescription: String {
         guard let frameRate = effectiveFrameRate else {
-            switch frameRateSource {
-            case .manual:
-                return "Wpisz fps ręcznie."
-            case .videoFile:
-                return "Wskaż plik wideo, aby pobrać fps."
-            }
+            return "Wpisz fps ręcznie."
         }
 
-        switch frameRateSource {
-        case .manual:
-            return "Ręcznie: \(formattedFrameRate(frameRate)) fps"
-        case .videoFile:
-            if let detectedVideoFrameRate {
-                return "Z pliku wideo: \(formattedFrameRate(detectedVideoFrameRate)) fps"
-            }
-
-            return "Z pliku wideo: \(formattedFrameRate(frameRate)) fps"
-        }
+        return "Ręcznie: \(formattedFrameRate(frameRate)) fps"
     }
 
     init() {
@@ -195,16 +160,6 @@ final class SublineWorkspace: ObservableObject {
         switch result {
         case .success(let url):
             loadSource(from: url)
-        case .failure(let error):
-            statusMessage = error.localizedDescription
-            statusLevel = .error
-        }
-    }
-
-    func handleVideoImport(_ result: Result<URL, Error>) async {
-        switch result {
-        case .success(let url):
-            await loadVideoMetadata(from: url)
         case .failure(let error):
             statusMessage = error.localizedDescription
             statusLevel = .error
@@ -232,7 +187,11 @@ final class SublineWorkspace: ObservableObject {
         }
     }
 
-    func loadVideoMetadata(from url: URL) async {
+    private func reloadSource() {
+        guard let url = sourceFileURL else {
+            return
+        }
+
         let needsSecurityScope = url.startAccessingSecurityScopedResource()
         defer {
             if needsSecurityScope {
@@ -241,42 +200,19 @@ final class SublineWorkspace: ObservableObject {
         }
 
         do {
-            let asset = AVURLAsset(url: url)
-            let tracks = try await asset.loadTracks(withMediaType: .video)
-
-            guard let track = tracks.first else {
-                videoFileURL = url
-                detectedVideoFrameRate = nil
-                statusMessage = "Plik wideo nie zawiera ścieżki wideo."
-                statusLevel = .warning
-                generatePreview()
-                return
-            }
-
-            let frameRate = try await track.load(.nominalFrameRate)
-
-            videoFileURL = url
-            detectedVideoFrameRate = frameRate > 0 ? Double(frameRate) : nil
-
-            if let detectedVideoFrameRate {
-                statusMessage = "Pobrano fps z pliku wideo: \(formattedFrameRate(detectedVideoFrameRate))."
-                statusLevel = .success
-            } else {
-                statusMessage = "Nie udało się pobrać fps z pliku wideo."
-                statusLevel = .warning
-            }
-
+            sourceText = try readText(from: url)
+            sourceLineCount = sourceText.components(separatedBy: .newlines).count
+            statusMessage = "Przeładowano plik po zmianie kodowania."
+            statusLevel = .success
             generatePreview()
         } catch {
-            videoFileURL = url
-            detectedVideoFrameRate = nil
-            statusMessage = "Nie udało się odczytać fps z pliku wideo: \(error.localizedDescription)"
+            statusMessage = "Nie udało się ponownie odczytać pliku: \(error.localizedDescription)"
             statusLevel = .error
-            generatePreview()
         }
     }
 
     func generatePreview() {
+        previewRefreshTask?.cancel()
         let trimmed = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             outputText = ""
@@ -292,17 +228,26 @@ final class SublineWorkspace: ObservableObject {
         guard let frameRate = effectiveFrameRate else {
             outputText = ""
             generatedCueCount = 0
-            statusMessage = frameRateSource == .manual ? "Podaj poprawne fps ręcznie." : "Wskaż plik wideo albo wpisz fps ręcznie."
+            statusMessage = "Podaj poprawne fps ręcznie."
             statusLevel = .warning
             return
         }
 
-        let cues = parseMicroDVDText(trimmed, frameRate: frameRate)
+        let parseResult = parseMicroDVDText(trimmed, frameRate: frameRate)
+        let cues = parseResult.cues
 
         guard !cues.isEmpty else {
             outputText = ""
             generatedCueCount = 0
-            statusMessage = "Nie znaleziono poprawnych wpisów do konwersji."
+            if parseResult.matchedLineCount == 0 {
+                statusMessage = "Nie wykryto żadnych linii w formacie MicroDVD {start}{end}tekst."
+            } else if parseResult.emptySubtitleCount > 0 {
+                statusMessage = "Wykryto \(parseResult.matchedLineCount) linii MicroDVD, ale \(parseResult.emptySubtitleCount) miało pusty tekst po znacznikach."
+            } else if parseResult.invalidFrameCount > 0 {
+                statusMessage = "Wykryto \(parseResult.matchedLineCount) linii MicroDVD, ale \(parseResult.invalidFrameCount) miało niepoprawne numery klatek."
+            } else {
+                statusMessage = "Wykryto \(parseResult.matchedLineCount) linii MicroDVD, ale żadna nie dała poprawnego napisu."
+            }
             statusLevel = .warning
             return
         }
@@ -311,6 +256,19 @@ final class SublineWorkspace: ObservableObject {
         outputText = renderSRT(from: cues)
         statusMessage = "Wygenerowano \(cues.count) wpisów SRT."
         statusLevel = .success
+    }
+
+    private func schedulePreviewRefresh() {
+        previewRefreshTask?.cancel()
+
+        previewRefreshTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else {
+                return
+            }
+
+            self.generatePreview()
+        }
     }
 }
 
@@ -321,40 +279,109 @@ private extension SublineWorkspace {
         let text: String
     }
 
-    func parseMicroDVDText(_ text: String, frameRate: Double) -> [SubtitleCue] {
-        text.components(separatedBy: .newlines).compactMap { line in
-            parseMicroDVDLine(line, frameRate: frameRate)
-        }
+    struct MicroDVDParseResult {
+        let cues: [SubtitleCue]
+        let matchedLineCount: Int
+        let emptySubtitleCount: Int
+        let invalidFrameCount: Int
     }
 
-    func parseMicroDVDLine(_ line: String, frameRate: Double) -> SubtitleCue? {
+    struct MicroDVDLine {
+        let startFrame: Int?
+        let endFrame: Int?
+        let subtitleText: String
+    }
+
+    func parseMicroDVDText(_ text: String, frameRate: Double) -> MicroDVDParseResult {
+        var cues: [SubtitleCue] = []
+        var matchedLineCount = 0
+        var emptySubtitleCount = 0
+        var invalidFrameCount = 0
+
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                continue
+            }
+
+            if parseDeclaredFrameRate(from: trimmed) != nil {
+                continue
+            }
+
+            guard let parsedLine = parseMicroDVDLine(trimmed) else {
+                continue
+            }
+
+            matchedLineCount += 1
+
+            guard let startFrame = parsedLine.startFrame,
+                  let endFrame = parsedLine.endFrame else {
+                invalidFrameCount += 1
+                continue
+            }
+
+            let subtitleText = microDVDText(from: parsedLine.subtitleText)
+            guard !subtitleText.isEmpty else {
+                emptySubtitleCount += 1
+                continue
+            }
+
+            cues.append(
+                SubtitleCue(
+                    start: frameToTimestamp(startFrame, frameRate: frameRate),
+                    end: frameToTimestamp(endFrame, frameRate: frameRate),
+                    text: subtitleText
+                )
+            )
+        }
+
+        return MicroDVDParseResult(
+            cues: cues,
+            matchedLineCount: matchedLineCount,
+            emptySubtitleCount: emptySubtitleCount,
+            invalidFrameCount: invalidFrameCount
+        )
+    }
+
+    func parseMicroDVDLine(_ line: String) -> MicroDVDLine? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return nil
         }
 
-        if let declaredFrameRate = parseDeclaredFrameRate(from: trimmed), declaredFrameRate > 0 {
+        if parseDeclaredFrameRate(from: trimmed) != nil {
             return nil
         }
 
-        guard let match = matchMicroDVDLine(trimmed) else {
+        guard trimmed.first == "{",
+              let firstClosingBrace = trimmed.firstIndex(of: "}") else {
             return nil
         }
 
-        guard let startFrame = Int(match[1]),
-              let endFrame = Int(match[2]) else {
+        let afterStartBrace = trimmed.index(after: trimmed.startIndex)
+        guard afterStartBrace < firstClosingBrace else {
             return nil
         }
 
-        let subtitleText = microDVDText(from: match[3])
-        guard !subtitleText.isEmpty else {
+        let startFrameString = String(trimmed[afterStartBrace..<firstClosingBrace])
+        let remainder = trimmed[trimmed.index(after: firstClosingBrace)...]
+        guard remainder.first == "{",
+              let secondClosingBrace = remainder.firstIndex(of: "}") else {
             return nil
         }
 
-        return SubtitleCue(
-            start: frameToTimestamp(startFrame, frameRate: frameRate),
-            end: frameToTimestamp(endFrame, frameRate: frameRate),
-            text: subtitleText
+        let afterSecondOpeningBrace = remainder.index(after: remainder.startIndex)
+        guard afterSecondOpeningBrace < secondClosingBrace else {
+            return nil
+        }
+
+        let endFrameString = String(remainder[afterSecondOpeningBrace..<secondClosingBrace])
+        let subtitleText = String(remainder[remainder.index(after: secondClosingBrace)...])
+
+        return MicroDVDLine(
+            startFrame: Int(startFrameString),
+            endFrame: Int(endFrameString),
+            subtitleText: subtitleText
         )
     }
 
@@ -408,10 +435,6 @@ private extension SublineWorkspace {
         return Double(match[1])
     }
 
-    func matchMicroDVDLine(_ line: String) -> [String]? {
-        matchRegex(#"^\{(\d+)\}\{(\d+)\}(.*)$"#, in: line)
-    }
-
     func matchRegex(_ pattern: String, in text: String) -> [String]? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
             return nil
@@ -447,15 +470,6 @@ private extension SublineWorkspace {
 
     func formattedFrameRate(_ value: Double) -> String {
         String(format: "%.3f", value)
-    }
-
-    func detectFrameRateInSourceText() -> Double? {
-        let lines = sourceText.components(separatedBy: .newlines)
-        guard let firstNonEmptyLine = lines.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
-            return nil
-        }
-
-        return parseDeclaredFrameRate(from: firstNonEmptyLine.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     func formatTimestamp(_ value: TimeInterval) -> String {

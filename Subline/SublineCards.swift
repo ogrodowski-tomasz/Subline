@@ -26,7 +26,7 @@ struct ConversionHeaderCard: View {
                 Divider()
 
                 HStack(spacing: 12) {
-                    Label(workspace.frameRateSource.title, systemImage: "clock")
+                    Label("Ręcznie", systemImage: "clock")
                     Spacer()
                     Label(workspace.effectiveFrameRateDescription, systemImage: "film")
                     Spacer()

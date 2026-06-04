@@ -3,7 +3,6 @@ import SwiftUI
 struct SublineSidebarView: View {
     @ObservedObject var workspace: SublineWorkspace
     let importAction: () -> Void
-    let videoImportAction: () -> Void
 
     var body: some View {
         Form {
@@ -54,52 +53,15 @@ private extension SublineSidebarView {
 
             Divider()
 
-            Picker("Źródło fps", selection: $workspace.frameRateSource) {
-                ForEach(SublineWorkspace.FrameRateSource.allCases) { source in
-                    Text(source.title).tag(source)
-                }
-            }
-            .pickerStyle(.segmented)
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("np. 23.976", text: $workspace.manualFrameRateInput)
+                        .textFieldStyle(.roundedBorder)
 
-            frameRateInputSection
-        }
-    }
-
-    @ViewBuilder
-    var frameRateInputSection: some View {
-        switch workspace.frameRateSource {
-        case .manual:
-            VStack(alignment: .leading, spacing: 8) {
-                TextField("np. 23.976", text: $workspace.manualFrameRateInput)
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Podaj liczbę klatek na sekundę dla pliku wideo.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        case .videoFile:
-            VStack(alignment: .leading, spacing: 8) {
-                Button(action: videoImportAction) {
-                    Label("Wybierz plik wideo", systemImage: "film")
-                }
-
-                LabeledContent("Plik wideo") {
-                    Text(workspace.videoFileName)
+                    Text("Podaj liczbę klatek na sekundę użytych przez napisy MicroDVD.")
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.trailing)
                 }
-
-                LabeledContent("FPS") {
-                    Text(workspace.effectiveFrameRateDescription)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.trailing)
-                }
-
-                Text("Subline odczyta fps z pliku wideo i użyje go do konwersji klatek na czas.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
-        }
     }
 
     var statusBanner: some View {
