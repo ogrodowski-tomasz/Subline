@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SublineDetailView: View {
     @ObservedObject var workspace: SublineWorkspace
+    let exportAction: () -> Void
 
     var body: some View {
         if workspace.sourceText.isEmpty {
@@ -11,7 +12,8 @@ struct SublineDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     ConversionHeaderCard(
                         workspace: workspace,
-                        regenerateAction: { workspace.generatePreview() }
+                        regenerateAction: { workspace.generatePreview() },
+                        exportAction: exportAction
                     )
                     EditablePreviewCard(
                         title: "Podgląd źródła",

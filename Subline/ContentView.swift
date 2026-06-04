@@ -14,7 +14,10 @@ struct ContentView: View {
                 importAction: openSubtitleFile
             )
         } detail: {
-            SublineDetailView(workspace: workspace)
+            SublineDetailView(
+                workspace: workspace,
+                exportAction: exportCurrentSRT
+            )
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar {
@@ -29,8 +32,7 @@ struct ContentView: View {
                 .disabled(!workspace.canGenerate)
 
                 Button("Eksportuj", systemImage: "square.and.arrow.down") {
-                    exportDocument.text = workspace.outputText
-                    isExporting = true
+                    exportCurrentSRT()
                 }
                 .disabled(!workspace.canExport)
             }
@@ -38,7 +40,7 @@ struct ContentView: View {
         .fileExporter(
             isPresented: $isExporting,
             document: exportDocument,
-            contentType: .plainText,
+            contentType: .srt,
             defaultFilename: workspace.defaultExportFilename
         ) { _ in
         }
@@ -59,10 +61,19 @@ struct ContentView: View {
 
         workspace.handleImport(.success(url))
     }
+
+    private func exportCurrentSRT() {
+        exportDocument.text = workspace.outputText
+        isExporting = true
+    }
 }
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         ContentView()
     }
+}
+
+extension UTType {
+    static let srt = UTType(filenameExtension: "srt", conformingTo: .plainText) ?? .plainText
 }

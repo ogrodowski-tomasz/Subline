@@ -122,7 +122,7 @@ final class SublineWorkspace: ObservableObject {
 
     var defaultExportFilename: String {
         let baseName = sourceFileURL?.deletingPathExtension().lastPathComponent ?? "subline"
-        return baseName + ".srt"
+        return baseName
     }
 
     var summaryText: String {
@@ -504,7 +504,7 @@ private extension String.Encoding {
 }
 
 struct SRTDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.plainText] }
+    static var readableContentTypes: [UTType] { [.srt] }
 
     var text: String
 

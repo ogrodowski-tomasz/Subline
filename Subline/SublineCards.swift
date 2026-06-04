@@ -3,6 +3,7 @@ import SwiftUI
 struct ConversionHeaderCard: View {
     @ObservedObject var workspace: SublineWorkspace
     let regenerateAction: () -> Void
+    let exportAction: () -> Void
 
     var body: some View {
         GroupBox {
@@ -21,6 +22,11 @@ struct ConversionHeaderCard: View {
                         regenerateAction()
                     }
                     .disabled(!workspace.canGenerate)
+
+                    Button("Eksportuj SRT", systemImage: "square.and.arrow.down") {
+                        exportAction()
+                    }
+                    .disabled(!workspace.canExport)
                 }
 
                 Divider()
