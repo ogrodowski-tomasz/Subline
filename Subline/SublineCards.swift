@@ -44,6 +44,7 @@ struct EditablePreviewCard: View {
     let title: String
     let subtitle: String
     @Binding var text: String
+    private let editorHeight: CGFloat = 140
 
     var body: some View {
         GroupBox {
@@ -52,7 +53,7 @@ struct EditablePreviewCard: View {
 
                 TextEditor(text: $text)
                     .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 220)
+                    .frame(height: editorHeight)
                     .scrollContentBackground(.hidden)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -74,6 +75,7 @@ struct ReadOnlyPreviewCard: View {
     let title: String
     let subtitle: String
     let text: String
+    private let editorHeight: CGFloat = 140
 
     var body: some View {
         GroupBox {
@@ -82,7 +84,7 @@ struct ReadOnlyPreviewCard: View {
 
                 TextEditor(text: .constant(text))
                     .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 220)
+                    .frame(height: editorHeight)
                     .scrollContentBackground(.hidden)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
