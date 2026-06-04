@@ -8,8 +8,6 @@ struct SublineSidebarView: View {
         Form {
             statusBanner
             sourceSection
-            modeSection
-            timingSection
             statusSection
         }
         .formStyle(.grouped)
@@ -43,6 +41,14 @@ private extension SublineSidebarView {
                 }
             }
             .pickerStyle(.menu)
+            LabeledContent("Format") {
+                Text("TXT z timestampami")
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Każdy blok powinien zawierać linię z czasem startu i końca oraz tekst napisów.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -51,55 +57,6 @@ private extension SublineSidebarView {
             StatusBannerView(level: workspace.statusLevel, message: workspace.statusMessage)
         }
         .listRowBackground(Color.clear)
-    }
-
-    var modeSection: some View {
-        Section("Tryb konwersji") {
-            Picker("Tryb", selection: $workspace.inputMode) {
-                ForEach(SublineWorkspace.InputMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.radioGroup)
-
-            Text(workspace.inputMode.helpText)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    var timingSection: some View {
-        Section("Reguły napisów") {
-            Stepper(
-                value: $workspace.maximumCharactersPerLine,
-                in: 20...80,
-                step: 1
-            ) {
-                LabeledContent("Znaki / linia") {
-                    Text("\(workspace.maximumCharactersPerLine)")
-                }
-            }
-
-            Stepper(
-                value: $workspace.plainTextCueDuration,
-                in: 1.0...10.0,
-                step: 0.25
-            ) {
-                LabeledContent("Czas trwania") {
-                    Text(workspace.plainTextCueDuration.formatted(.number.precision(.fractionLength(2))) + " s")
-                }
-            }
-
-            Stepper(
-                value: $workspace.plainTextGapDuration,
-                in: 0.0...3.0,
-                step: 0.25
-            ) {
-                LabeledContent("Przerwa") {
-                    Text(workspace.plainTextGapDuration.formatted(.number.precision(.fractionLength(2))) + " s")
-                }
-            }
-        }
     }
 
     var statusSection: some View {

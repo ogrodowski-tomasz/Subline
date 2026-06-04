@@ -38,31 +38,6 @@ final class SublineWorkspace: ObservableObject {
         }
     }
 
-    enum InputMode: String, CaseIterable, Identifiable {
-        case timestampedText
-        case plainTextTiming
-
-        var id: String { rawValue }
-
-        var title: String {
-            switch self {
-            case .timestampedText:
-                return "TXT z timestampami"
-            case .plainTextTiming:
-                return "Zwykły tekst"
-            }
-        }
-
-        var helpText: String {
-            switch self {
-            case .timestampedText:
-                return "Każdy blok powinien zawierać linię z czasem startu i końca oraz tekst napisów."
-            case .plainTextTiming:
-                return "Każdy wiersz zostanie potraktowany jako osobny napis z automatycznym czasem trwania."
-            }
-        }
-    }
-
     enum TextEncodingOption: String, CaseIterable, Identifiable {
         case windowsCP1250
         case utf8
@@ -108,10 +83,6 @@ final class SublineWorkspace: ObservableObject {
         }
     }
 
-    @Published var inputMode: InputMode = .timestampedText {
-        didSet { generatePreview() }
-    }
-
     @Published var sourceFileURL: URL?
     @Published var selectedEncoding: TextEncodingOption = .windowsCP1250
     @Published var sourceText: String = "" {
@@ -123,17 +94,6 @@ final class SublineWorkspace: ObservableObject {
     @Published var statusLevel: StatusLevel = .info
     @Published var sourceLineCount: Int = 0
     @Published var generatedCueCount: Int = 0
-    @Published var maximumCharactersPerLine: Int = 42 {
-        didSet { generatePreview() }
-    }
-
-    @Published var plainTextCueDuration: Double = 2.5 {
-        didSet { generatePreview() }
-    }
-
-    @Published var plainTextGapDuration: Double = 0.35 {
-        didSet { generatePreview() }
-    }
 
     var canGenerate: Bool {
         !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -153,12 +113,7 @@ final class SublineWorkspace: ObservableObject {
     }
 
     var summaryText: String {
-        switch inputMode {
-        case .timestampedText:
-            return "Parsowanie bloków z czasami i eksport do standardowego formatu SRT."
-        case .plainTextTiming:
-            return "Automatyczne tworzenie cue na podstawie zwykłego tekstu i prostych reguł czasowych."
-        }
+        "Parsowanie bloków z czasami i eksport do standardowego formatu SRT."
     }
 
     init() {
@@ -209,13 +164,7 @@ final class SublineWorkspace: ObservableObject {
 
         sourceLineCount = sourceText.components(separatedBy: .newlines).count
 
-        let cues: [SubtitleCue]
-        switch inputMode {
-        case .timestampedText:
-            cues = parseTimestampedText(trimmed)
-        case .plainTextTiming:
-            cues = generateTimedCues(from: trimmed)
-        }
+        let cues = parseTimestampedText(trimmed)
 
         guard !cues.isEmpty else {
             outputText = ""
@@ -264,53 +213,6 @@ private extension SublineWorkspace {
         }
 
         return SubtitleCue(start: range.start, end: range.end, text: subtitleText)
-    }
-
-    func generateTimedCues(from text: String) -> [SubtitleCue] {
-        let lines = text
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        var currentStart: TimeInterval = 0
-        var cues: [SubtitleCue] = []
-        let charactersPerSecond = max(8.0, Double(maximumCharactersPerLine) / max(plainTextCueDuration, 0.25))
-
-        for line in lines {
-            let normalizedLine = normalizedSubtitleText(line)
-            let estimatedDuration = max(plainTextCueDuration, Double(normalizedLine.count) / charactersPerSecond)
-            let end = currentStart + estimatedDuration
-            cues.append(SubtitleCue(start: currentStart, end: end, text: normalizedLine))
-            currentStart = end + plainTextGapDuration
-        }
-
-        return cues
-    }
-
-    func normalizedSubtitleText(_ text: String) -> String {
-        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !words.isEmpty else {
-            return text
-        }
-
-        var lines: [String] = []
-        var currentLine = ""
-
-        for word in words {
-            let proposed = currentLine.isEmpty ? word : currentLine + " " + word
-            if proposed.count > maximumCharactersPerLine, !currentLine.isEmpty {
-                lines.append(currentLine)
-                currentLine = word
-            } else {
-                currentLine = proposed
-            }
-        }
-
-        if !currentLine.isEmpty {
-            lines.append(currentLine)
-        }
-
-        return lines.joined(separator: "\n")
     }
 
     func renderSRT(from cues: [SubtitleCue]) -> String {
