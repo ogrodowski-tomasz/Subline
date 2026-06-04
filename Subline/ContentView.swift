@@ -1,17 +1,18 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var workspace = SublineWorkspace()
     @State private var exportDocument = SRTDocument()
-    @State private var isImporting = false
     @State private var isExporting = false
 
     var body: some View {
         NavigationSplitView {
             SublineSidebarView(
                 workspace: workspace,
-                importAction: { isImporting = true }
+                importAction: openSubtitleFile,
+                videoImportAction: openVideoFile
             )
         } detail: {
             SublineDetailView(workspace: workspace)
@@ -20,7 +21,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Importuj TXT", systemImage: "doc.badge.plus") {
-                    isImporting = true
+                    openSubtitleFile()
                 }
 
                 Button("Generuj SRT", systemImage: "sparkles") {
@@ -35,18 +36,46 @@ struct ContentView: View {
                 .disabled(!workspace.canExport)
             }
         }
-        .fileImporter(
-            isPresented: $isImporting,
-            allowedContentTypes: [.plainText]
-        ) { result in
-            workspace.handleImport(result)
-        }
         .fileExporter(
             isPresented: $isExporting,
             document: exportDocument,
             contentType: .plainText,
             defaultFilename: workspace.defaultExportFilename
         ) { _ in
+        }
+    }
+
+    private func openSubtitleFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.text, .plainText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.canCreateDirectories = false
+        panel.message = "Wybierz plik TXT z napisami MicroDVD"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        workspace.handleImport(.success(url))
+    }
+
+    private func openVideoFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.canCreateDirectories = false
+        panel.message = "Wybierz plik wideo, z którego odczytamy fps"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        Task { @MainActor in
+            await workspace.handleVideoImport(.success(url))
         }
     }
 }

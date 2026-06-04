@@ -35,7 +35,7 @@ private struct SublineEmptyStateView: View {
         ContentUnavailableView(
             "Brak pliku wejściowego",
             systemImage: "doc.text.magnifyingglass",
-            description: Text("Zaimportuj plik TXT, aby zobaczyć podgląd i wygenerować plik SRT.")
+            description: Text("Zaimportuj plik MicroDVD TXT i ustaw źródło fps, aby zobaczyć podgląd i wygenerować plik SRT.")
         )
     }
 }

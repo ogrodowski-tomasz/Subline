@@ -26,7 +26,9 @@ struct ConversionHeaderCard: View {
                 Divider()
 
                 HStack(spacing: 12) {
-                    Label("TXT z timestampami", systemImage: "clock")
+                    Label(workspace.frameRateSource.title, systemImage: "clock")
+                    Spacer()
+                    Label(workspace.effectiveFrameRateDescription, systemImage: "film")
                     Spacer()
                     Label("\(workspace.generatedCueCount) wpisów", systemImage: "text.alignleft")
                 }

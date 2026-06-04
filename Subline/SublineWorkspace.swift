@@ -1,5 +1,6 @@
-import Foundation
+import AVFoundation
 import Combine
+import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -83,8 +84,34 @@ final class SublineWorkspace: ObservableObject {
         }
     }
 
+    enum FrameRateSource: String, CaseIterable, Identifiable {
+        case manual
+        case videoFile
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .manual:
+                return "Ręcznie"
+            case .videoFile:
+                return "Z pliku wideo"
+            }
+        }
+    }
+
     @Published var sourceFileURL: URL?
     @Published var selectedEncoding: TextEncodingOption = .windowsCP1250
+    @Published var frameRateSource: FrameRateSource = .manual {
+        didSet { generatePreview() }
+    }
+    @Published var manualFrameRateInput: String = "" {
+        didSet { generatePreview() }
+    }
+    @Published var videoFileURL: URL?
+    @Published var detectedVideoFrameRate: Double? {
+        didSet { generatePreview() }
+    }
     @Published var sourceText: String = "" {
         didSet { generatePreview() }
     }
@@ -96,7 +123,7 @@ final class SublineWorkspace: ObservableObject {
     @Published var generatedCueCount: Int = 0
 
     var canGenerate: Bool {
-        !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && effectiveFrameRate != nil
     }
 
     var canExport: Bool {
@@ -107,13 +134,57 @@ final class SublineWorkspace: ObservableObject {
         sourceFileURL?.lastPathComponent ?? "Nie wybrano pliku"
     }
 
+    var videoFileName: String {
+        videoFileURL?.lastPathComponent ?? "Nie wybrano pliku wideo"
+    }
+
     var defaultExportFilename: String {
         let baseName = sourceFileURL?.deletingPathExtension().lastPathComponent ?? "subline"
         return baseName + ".srt"
     }
 
     var summaryText: String {
-        "Parsowanie bloków z czasami i eksport do standardowego formatu SRT."
+        if let frameRate = effectiveFrameRate {
+            return "Konwersja MicroDVD z \(formattedFrameRate(frameRate)) fps do SRT."
+        }
+
+        return "Konwersja MicroDVD z klatek do SRT."
+    }
+
+    var manualFrameRateValue: Double? {
+        let normalized = manualFrameRateInput.replacingOccurrences(of: ",", with: ".")
+        return Double(normalized)
+    }
+
+    var effectiveFrameRate: Double? {
+        switch frameRateSource {
+        case .manual:
+            return manualFrameRateValue
+        case .videoFile:
+            return detectedVideoFrameRate ?? detectFrameRateInSourceText()
+        }
+    }
+
+    var effectiveFrameRateDescription: String {
+        guard let frameRate = effectiveFrameRate else {
+            switch frameRateSource {
+            case .manual:
+                return "Wpisz fps ręcznie."
+            case .videoFile:
+                return "Wskaż plik wideo, aby pobrać fps."
+            }
+        }
+
+        switch frameRateSource {
+        case .manual:
+            return "Ręcznie: \(formattedFrameRate(frameRate)) fps"
+        case .videoFile:
+            if let detectedVideoFrameRate {
+                return "Z pliku wideo: \(formattedFrameRate(detectedVideoFrameRate)) fps"
+            }
+
+            return "Z pliku wideo: \(formattedFrameRate(frameRate)) fps"
+        }
     }
 
     init() {
@@ -130,6 +201,16 @@ final class SublineWorkspace: ObservableObject {
         }
     }
 
+    func handleVideoImport(_ result: Result<URL, Error>) async {
+        switch result {
+        case .success(let url):
+            await loadVideoMetadata(from: url)
+        case .failure(let error):
+            statusMessage = error.localizedDescription
+            statusLevel = .error
+        }
+    }
+
     func loadSource(from url: URL) {
         let needsSecurityScope = url.startAccessingSecurityScopedResource()
         defer {
@@ -139,15 +220,59 @@ final class SublineWorkspace: ObservableObject {
         }
 
         do {
-            sourceText = try readText(from: url)
             sourceFileURL = url
+            sourceText = try readText(from: url)
             sourceLineCount = sourceText.components(separatedBy: .newlines).count
-            statusMessage = "Zaimportowano plik."
+            statusMessage = "Zaimportowano plik napisów."
             statusLevel = .success
             generatePreview()
         } catch {
             statusMessage = "Nie udało się odczytać pliku: \(error.localizedDescription)"
             statusLevel = .error
+        }
+    }
+
+    func loadVideoMetadata(from url: URL) async {
+        let needsSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if needsSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            let asset = AVURLAsset(url: url)
+            let tracks = try await asset.loadTracks(withMediaType: .video)
+
+            guard let track = tracks.first else {
+                videoFileURL = url
+                detectedVideoFrameRate = nil
+                statusMessage = "Plik wideo nie zawiera ścieżki wideo."
+                statusLevel = .warning
+                generatePreview()
+                return
+            }
+
+            let frameRate = try await track.load(.nominalFrameRate)
+
+            videoFileURL = url
+            detectedVideoFrameRate = frameRate > 0 ? Double(frameRate) : nil
+
+            if let detectedVideoFrameRate {
+                statusMessage = "Pobrano fps z pliku wideo: \(formattedFrameRate(detectedVideoFrameRate))."
+                statusLevel = .success
+            } else {
+                statusMessage = "Nie udało się pobrać fps z pliku wideo."
+                statusLevel = .warning
+            }
+
+            generatePreview()
+        } catch {
+            videoFileURL = url
+            detectedVideoFrameRate = nil
+            statusMessage = "Nie udało się odczytać fps z pliku wideo: \(error.localizedDescription)"
+            statusLevel = .error
+            generatePreview()
         }
     }
 
@@ -164,7 +289,15 @@ final class SublineWorkspace: ObservableObject {
 
         sourceLineCount = sourceText.components(separatedBy: .newlines).count
 
-        let cues = parseTimestampedText(trimmed)
+        guard let frameRate = effectiveFrameRate else {
+            outputText = ""
+            generatedCueCount = 0
+            statusMessage = frameRateSource == .manual ? "Podaj poprawne fps ręcznie." : "Wskaż plik wideo albo wpisz fps ręcznie."
+            statusLevel = .warning
+            return
+        }
+
+        let cues = parseMicroDVDText(trimmed, frameRate: frameRate)
 
         guard !cues.isEmpty else {
             outputText = ""
@@ -188,31 +321,41 @@ private extension SublineWorkspace {
         let text: String
     }
 
-    func parseTimestampedText(_ text: String) -> [SubtitleCue] {
-        splitBlocks(in: text).compactMap { block in
-            guard let cue = parseTimestampedBlock(block) else {
-                return nil
-            }
-            return cue
+    func parseMicroDVDText(_ text: String, frameRate: Double) -> [SubtitleCue] {
+        text.components(separatedBy: .newlines).compactMap { line in
+            parseMicroDVDLine(line, frameRate: frameRate)
         }
     }
 
-    func parseTimestampedBlock(_ block: [String]) -> SubtitleCue? {
-        guard let timeLineIndex = block.firstIndex(where: { parseTimeRange(from: $0) != nil }) else {
+    func parseMicroDVDLine(_ line: String, frameRate: Double) -> SubtitleCue? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
             return nil
         }
 
-        guard let range = parseTimeRange(from: block[timeLineIndex]) else {
+        if let declaredFrameRate = parseDeclaredFrameRate(from: trimmed), declaredFrameRate > 0 {
             return nil
         }
 
-        let textLines = block[(timeLineIndex + 1)...].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        let subtitleText = textLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let match = matchMicroDVDLine(trimmed) else {
+            return nil
+        }
+
+        guard let startFrame = Int(match[1]),
+              let endFrame = Int(match[2]) else {
+            return nil
+        }
+
+        let subtitleText = microDVDText(from: match[3])
         guard !subtitleText.isEmpty else {
             return nil
         }
 
-        return SubtitleCue(start: range.start, end: range.end, text: subtitleText)
+        return SubtitleCue(
+            start: frameToTimestamp(startFrame, frameRate: frameRate),
+            end: frameToTimestamp(endFrame, frameRate: frameRate),
+            text: subtitleText
+        )
     }
 
     func renderSRT(from cues: [SubtitleCue]) -> String {
@@ -257,74 +400,62 @@ private extension SublineWorkspace {
         throw CocoaError(.fileReadInapplicableStringEncoding)
     }
 
-    func splitBlocks(in text: String) -> [[String]] {
-        var blocks: [[String]] = []
-        var currentBlock: [String] = []
+    func parseDeclaredFrameRate(from line: String) -> Double? {
+        guard let match = matchRegex(#"^\{1\}\{1\}(\d+(?:\.\d+)?)$"#, in: line) else {
+            return nil
+        }
 
-        for rawLine in text.components(separatedBy: .newlines) {
-            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                if !currentBlock.isEmpty {
-                    blocks.append(currentBlock)
-                    currentBlock.removeAll(keepingCapacity: true)
-                }
-            } else {
-                currentBlock.append(trimmed)
+        return Double(match[1])
+    }
+
+    func matchMicroDVDLine(_ line: String) -> [String]? {
+        matchRegex(#"^\{(\d+)\}\{(\d+)\}(.*)$"#, in: line)
+    }
+
+    func matchRegex(_ pattern: String, in text: String) -> [String]? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return nil
+        }
+
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range) else {
+            return nil
+        }
+
+        var groups: [String] = []
+        for index in 1..<match.numberOfRanges {
+            let groupRange = match.range(at: index)
+            guard let swiftRange = Range(groupRange, in: text) else {
+                groups.append("")
+                continue
             }
+            groups.append(String(text[swiftRange]))
         }
 
-        if !currentBlock.isEmpty {
-            blocks.append(currentBlock)
-        }
-
-        return blocks
+        return groups
     }
 
-    func parseTimeRange(from line: String) -> (start: TimeInterval, end: TimeInterval)? {
-        let normalized = line
-            .replacingOccurrences(of: "-->", with: " ")
-            .replacingOccurrences(of: "→", with: " ")
-
-        let tokens = normalized.split(whereSeparator: \.isWhitespace).map(String.init)
-
-        if tokens.count >= 3,
-           isInteger(tokens[0]),
-           let start = parseTimestamp(tokens[1]),
-           let end = parseTimestamp(tokens[2]) {
-            return (start, end)
-        }
-
-        if tokens.count >= 2,
-           let start = parseTimestamp(tokens[0]),
-           let end = parseTimestamp(tokens[1]) {
-            return (start, end)
-        }
-
-        return nil
+    func frameToTimestamp(_ frame: Int, frameRate: Double) -> TimeInterval {
+        TimeInterval(frame) / frameRate
     }
 
-    func isInteger(_ value: String) -> Bool {
-        Int(value) != nil
+    func microDVDText(from text: String) -> String {
+        text
+            .replacingOccurrences(of: "|", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func parseTimestamp(_ value: String) -> TimeInterval? {
-        let normalized = value.replacingOccurrences(of: ",", with: ".")
-        let parts = normalized.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count == 3 else {
+    func formattedFrameRate(_ value: Double) -> String {
+        String(format: "%.3f", value)
+    }
+
+    func detectFrameRateInSourceText() -> Double? {
+        let lines = sourceText.components(separatedBy: .newlines)
+        guard let firstNonEmptyLine = lines.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             return nil
         }
 
-        let secondsParts = parts[2].split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-        guard secondsParts.count == 2,
-              let hours = Int(parts[0]),
-              let minutes = Int(parts[1]),
-              let seconds = Int(secondsParts[0]),
-              let milliseconds = Int(secondsParts[1]) else {
-            return nil
-        }
-
-        let totalMilliseconds = (hours * 3_600_000) + (minutes * 60_000) + (seconds * 1_000) + milliseconds
-        return TimeInterval(totalMilliseconds) / 1_000
+        return parseDeclaredFrameRate(from: firstNonEmptyLine.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     func formatTimestamp(_ value: TimeInterval) -> String {
